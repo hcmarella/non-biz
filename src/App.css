@@ -1,0 +1,139 @@
+.chat {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 32px 20px;
+}
+
+.chat-message {
+  border: 1px solid var(--border, #333);
+  border-radius: 8px;
+  padding: 16px;
+  margin-top: 16px;
+}
+
+.chat-message__answer {
+  margin: 0 0 12px;
+  line-height: 1.5;
+}
+
+.sources-panel {
+  margin: 12px 0;
+}
+
+.sources-panel__heading {
+  margin: 0 0 8px;
+  font-size: 13px;
+  text-transform: uppercase;
+  opacity: 0.7;
+}
+
+.sources-panel__list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sources-panel__item {
+  font-size: 14px;
+}
+
+.sources-panel__type {
+  font-weight: 600;
+  margin-right: 6px;
+  text-transform: capitalize;
+}
+
+.sources-panel__path {
+  opacity: 0.6;
+  margin-left: 6px;
+  font-size: 12px;
+}
+
+.sources-panel__citation {
+  margin: 4px 0 0;
+  padding-left: 10px;
+  border-left: 2px solid var(--border, #333);
+  opacity: 0.8;
+  font-style: italic;
+}
+
+.actions-row {
+  display: flex;
+  gap: 8px;
+  margin: 12px 0;
+  flex-wrap: wrap;
+}
+
+.actions-row__button {
+  font-size: 14px;
+  padding: 6px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border, #333);
+  background: transparent;
+  cursor: pointer;
+}
+
+.transparency-line {
+  margin: 8px 0 0;
+  font-size: 12px;
+  opacity: 0.6;
+}
+
+.chat-view__entry {
+  margin-top: 20px;
+}
+
+.chat-view__question {
+  font-weight: 600;
+}
+
+.chat-view__error {
+  color: #d33;
+}
+
+.chat-view__form {
+  display: flex;
+  gap: 8px;
+  margin-top: 20px;
+}
+
+.chat-view__input {
+  flex: 1;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border, #333);
+}
+
+.admin-section {
+  margin-top: 40px;
+  padding-top: 20px;
+  border-top: 1px solid var(--border, #333);
+}
+
+.review-queue__item {
+  border: 1px solid var(--border, #333);
+  border-radius: 8px;
+  padding: 12px;
+  margin-top: 12px;
+}
+
+.review-queue__meta {
+  font-size: 12px;
+  opacity: 0.6;
+  margin: 0 0 8px;
+}
+
+.review-queue__textarea {
+  width: 100%;
+  min-height: 80px;
+  box-sizing: border-box;
+}
+
+.review-queue__actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}

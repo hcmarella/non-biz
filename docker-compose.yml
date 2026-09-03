@@ -1,0 +1,32 @@
+services:
+  # Stand-in for forge-api-gateway — replace with the real service/build
+  # context once that repo/host is available (see mock-gateway/Dockerfile).
+  gateway:
+    build: ./mock-gateway
+    ports:
+      - "8787:8787"
+
+  bff:
+    build: ./bff
+    environment:
+      GATEWAY_BASE_URL: http://gateway:8787
+    ports:
+      - "4000:4000"
+    depends_on:
+      - gateway
+
+  ui:
+    build: .
+    environment:
+      # ARCHITECTURE.md §6.4: use the compose service name, not localhost —
+      # this only resolves for requests made *inside* the compose network.
+      # A browser on the host reaches the ui container via localhost:5173,
+      # but the JS it downloads still fetches VITE_API_BASE_URL from wherever
+      # it's told to; if the browser itself can't resolve `bff`, add a hosts
+      # entry / reverse proxy, or run VITE_API_BASE_URL=http://localhost:4000
+      # instead for pure host-browser dev (the bff port is published above).
+      VITE_API_BASE_URL: http://bff:4000
+    ports:
+      - "5173:5173"
+    depends_on:
+      - bff
