@@ -9,9 +9,14 @@ import type { ReviewItem } from "../types/review";
 interface ReviewQueuePageProps {
   teamId: string;
   reviewer: string;
+  // Checked server-side against ADMIN_ROLES (app/admin/review_queue.py) —
+  // not real authorization yet (the caller can claim any role), just a
+  // stopgap that stops an accidental wrong-role call. See that file's
+  // comment on _require_admin_role for the caveat.
+  role: string;
 }
 
-export function ReviewQueuePage({ teamId, reviewer }: ReviewQueuePageProps) {
+export function ReviewQueuePage({ teamId, reviewer, role }: ReviewQueuePageProps) {
   const [items, setItems] = useState<ReviewItem[]>([]);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [isLoading, setIsLoading] = useState(true);
@@ -34,12 +39,12 @@ export function ReviewQueuePage({ teamId, reviewer }: ReviewQueuePageProps) {
   useEffect(load, [teamId]);
 
   async function handleApprove(reviewId: string) {
-    await approveReviewItem(reviewId, drafts[reviewId] ?? "", reviewer);
+    await approveReviewItem(reviewId, drafts[reviewId] ?? "", reviewer, role);
     load();
   }
 
   async function handleReject(reviewId: string) {
-    await rejectReviewItem(reviewId, reviewer);
+    await rejectReviewItem(reviewId, reviewer, role);
     load();
   }
 

@@ -7,7 +7,9 @@
 //   and returns {answer, route, sources, gate_passed, score, conversation_id, message_id}
 // - GET /admin/review-queue?team_id=... lists {review_id, team_id, target,
 //   proposed_content, status}
-// - POST /admin/review-queue/:id/approve-skill and .../reject
+// - POST /admin/review-queue/:id/approve-skill and .../reject, both requiring
+//   a `role` in ADMIN_ROLES (client-supplied, not verified — a stopgap, same
+//   trust model as team_id/persona/user_email elsewhere in that repo)
 //
 // Point VITE_API_BASE_URL/GATEWAY_BASE_URL at the real gateway to replace
 // this — no UI changes should be needed.
@@ -15,6 +17,7 @@ import { randomUUID } from "node:crypto";
 import { createServer } from "node:http";
 
 const PORT = 8787;
+const ADMIN_ROLES = new Set(["admin", "super_user"]);
 
 let reviewQueue = [
   {
@@ -98,7 +101,10 @@ const server = createServer(async (req, res) => {
     /^\/admin\/review-queue\/([^/]+)\/approve-skill$/,
   );
   if (req.method === "POST" && approveMatch) {
-    const { edited_content } = await readJson(req);
+    const { edited_content, role } = await readJson(req);
+    if (!ADMIN_ROLES.has(role)) {
+      return send(res, 403, { error: `role ${role} is not permitted to approve_skill` });
+    }
     const item = reviewQueue.find((i) => i.review_id === approveMatch[1]);
     if (!item) return send(res, 404, { error: "not found" });
 
@@ -116,6 +122,10 @@ const server = createServer(async (req, res) => {
     /^\/admin\/review-queue\/([^/]+)\/reject$/,
   );
   if (req.method === "POST" && rejectMatch) {
+    const { role } = await readJson(req);
+    if (!ADMIN_ROLES.has(role)) {
+      return send(res, 403, { error: `role ${role} is not permitted to reject_skill` });
+    }
     const item = reviewQueue.find((i) => i.review_id === rejectMatch[1]);
     if (!item) return send(res, 404, { error: "not found" });
 

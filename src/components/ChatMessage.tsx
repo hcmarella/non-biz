@@ -1,3 +1,4 @@
+import ReactMarkdown from "react-markdown";
 import type { ChatResponse } from "../schemas/ai_response";
 import { SourcesPanel } from "./SourcesPanel";
 import { TransparencyLine } from "./TransparencyLine";
@@ -9,7 +10,9 @@ interface ChatMessageProps {
 export function ChatMessage({ response }: ChatMessageProps) {
   return (
     <div className="chat-message">
-      <p className="chat-message__answer">{response.answer}</p>
+      <div className="chat-message__answer">
+        <ReactMarkdown>{response.answer}</ReactMarkdown>
+      </div>
       <SourcesPanel sources={response.sources} />
       <TransparencyLine gatePassed={response.gate_passed} sources={response.sources} />
     </div>

@@ -45,6 +45,7 @@ describe("App end-to-end against bff -> mock-gateway", () => {
     fireEvent.change(screen.getByLabelText(/Persona:/), {
       target: { value: "admin" },
     });
+    fireEvent.click(screen.getByRole("button", { name: "Admin" }));
 
     // Admin section is code-split (React.lazy) and gated on persona === "admin".
     const textarea = await screen.findByRole<HTMLTextAreaElement>(
@@ -60,6 +61,7 @@ describe("App end-to-end against bff -> mock-gateway", () => {
       expect(screen.queryByText(/new_skill/)).not.toBeInTheDocument(),
     );
 
+    fireEvent.click(screen.getByRole("button", { name: "Chat" }));
     const chatInput = screen.getByLabelText("Chat message");
     fireEvent.change(chatInput, { target: { value: "when does staging refresh" } });
     fireEvent.click(screen.getByRole("button", { name: "Send" }));

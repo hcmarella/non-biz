@@ -33,19 +33,21 @@ export function approveReviewItem(
   reviewId: string,
   editedContent: string,
   reviewer: string,
+  role: string,
 ): Promise<unknown> {
   return request(`/admin/review-queue/${reviewId}/approve-skill`, {
     method: "POST",
-    body: JSON.stringify({ edited_content: editedContent, reviewer }),
+    body: JSON.stringify({ edited_content: editedContent, reviewer, role }),
   });
 }
 
 export function rejectReviewItem(
   reviewId: string,
   reviewer: string,
+  role: string,
 ): Promise<unknown> {
   return request(`/admin/review-queue/${reviewId}/reject`, {
     method: "POST",
-    body: JSON.stringify({ reviewer }),
+    body: JSON.stringify({ reviewer, role }),
   });
 }
