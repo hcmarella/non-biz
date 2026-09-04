@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { ChatMessage } from "../components/ChatMessage";
 import { Sidebar } from "../components/Sidebar";
-import { sendChatMessage } from "../lib/apiClient";
+import { ThinkingIndicator } from "../components/ThinkingIndicator";
+import { streamChat } from "../lib/streamChat";
 import type { ChatResponse } from "../schemas/ai_response";
 
 interface ChatEntry {
@@ -9,6 +10,7 @@ interface ChatEntry {
   question: string;
   response: ChatResponse | null;
   error: string | null;
+  progressLabel: string | null;
 }
 
 interface Conversation {
@@ -40,6 +42,13 @@ export function ChatPage({ teamId, persona, initialQuestion }: ChatPageProps) {
     setConversations((prev) => prev.map((c) => (c.id === activeId ? update(c) : c)));
   }
 
+  function updateEntry(entryId: string, update: (e: ChatEntry) => ChatEntry) {
+    updateActive((c) => ({
+      ...c,
+      entries: c.entries.map((e) => (e.id === entryId ? update(e) : e)),
+    }));
+  }
+
   function handleNewChat() {
     const conversation = newConversation();
     setConversations((prev) => [conversation, ...prev]);
@@ -54,32 +63,33 @@ export function ChatPage({ teamId, persona, initialQuestion }: ChatPageProps) {
 
     const entryId = crypto.randomUUID();
     const isFirstMessage = active.entries.length === 0;
+    const conversationId = active.conversationId;
     updateActive((c) => ({
       ...c,
       title: isFirstMessage ? question.slice(0, 48) : c.title,
-      entries: [...c.entries, { id: entryId, question, response: null, error: null }],
+      entries: [
+        ...c.entries,
+        { id: entryId, question, response: null, error: null, progressLabel: "Understanding your question…" },
+      ],
     }));
     setInput("");
     setIsSending(true);
 
     try {
-      const response = await sendChatMessage({
-        question,
-        team_id: teamId,
-        persona,
-        conversation_id: active.conversationId,
-      });
+      const response = await streamChat(
+        { question, team_id: teamId, persona, conversation_id: conversationId },
+        (_stage, label) => updateEntry(entryId, (e) => ({ ...e, progressLabel: label })),
+      );
       updateActive((c) => ({
         ...c,
         conversationId: response.conversation_id,
-        entries: c.entries.map((e) => (e.id === entryId ? { ...e, response } : e)),
+        entries: c.entries.map((e) =>
+          e.id === entryId ? { ...e, response, progressLabel: null } : e,
+        ),
       }));
     } catch (err) {
       const message = err instanceof Error ? err.message : "Request failed";
-      updateActive((c) => ({
-        ...c,
-        entries: c.entries.map((e) => (e.id === entryId ? { ...e, error: message } : e)),
-      }));
+      updateEntry(entryId, (e) => ({ ...e, error: message, progressLabel: null }));
     } finally {
       setIsSending(false);
     }
@@ -112,7 +122,9 @@ export function ChatPage({ teamId, persona, initialQuestion }: ChatPageProps) {
                 </div>
               )}
               {!entry.response && !entry.error && (
-                <div className="message-bubble message-bubble--assistant">Thinking…</div>
+                <div className="message-bubble message-bubble--assistant">
+                  <ThinkingIndicator label={entry.progressLabel ?? "Thinking…"} />
+                </div>
               )}
             </div>
           ))}

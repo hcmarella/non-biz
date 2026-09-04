@@ -3,6 +3,7 @@
 // shapes the request, attaches identity, and proxies to forge-api-gateway.
 // Redis-backed request shaping can be added here later; none needed yet.
 import { createServer } from "node:http";
+import { Readable } from "node:stream";
 
 const PORT = Number(process.env.PORT ?? 4000);
 const GATEWAY_BASE_URL = process.env.GATEWAY_BASE_URL ?? "http://localhost:8787";
@@ -38,6 +39,7 @@ async function readBody(req) {
 // Known routes only — this proxies a fixed allowlist, it is not an open relay.
 const ROUTES = [
   { method: "POST", pattern: /^\/ai\/chat$/ },
+  { method: "POST", pattern: /^\/ai\/chat\/stream$/, stream: true },
   { method: "GET", pattern: /^\/admin\/review-queue$/ },
   { method: "POST", pattern: /^\/admin\/review-queue\/[^/]+\/approve-skill$/ },
   { method: "POST", pattern: /^\/admin\/review-queue\/[^/]+\/reject$/ },
@@ -65,6 +67,19 @@ const server = createServer(async (req, res) => {
       },
       body,
     });
+
+    if (route.stream && upstream.body) {
+      // Pipe chunks through as they arrive — buffering the whole body first
+      // (like the branch below) would defeat the point of an SSE stream.
+      res.writeHead(upstream.status, {
+        "Content-Type": upstream.headers.get("Content-Type") ?? "text/event-stream",
+        "Access-Control-Allow-Origin": "*",
+        "Cache-Control": "no-cache",
+        Connection: "keep-alive",
+      });
+      Readable.fromWeb(upstream.body).pipe(res);
+      return;
+    }
 
     const text = await upstream.text();
     res.writeHead(upstream.status, {

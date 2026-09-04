@@ -2,16 +2,24 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { ChatPage } from "./ChatPage";
 
-vi.mock("../lib/apiClient", () => ({
-  sendChatMessage: vi.fn(async ({ question }: { question: string }) => ({
-    answer: `Echo: ${question}`,
-    route: "rag_node",
-    sources: [],
-    gate_passed: true,
-    score: 0.9,
-    conversation_id: "conv-1",
-    message_id: "msg-1",
-  })),
+vi.mock("../lib/streamChat", () => ({
+  streamChat: vi.fn(
+    async (
+      { question }: { question: string },
+      onProgress: (stage: string, label: string) => void,
+    ) => {
+      onProgress("triage", "Understanding your question…");
+      return {
+        answer: `Echo: ${question}`,
+        route: "rag_node",
+        sources: [],
+        gate_passed: true,
+        score: 0.9,
+        conversation_id: "conv-1",
+        message_id: "msg-1",
+      };
+    },
+  ),
 }));
 
 describe("ChatPage", () => {

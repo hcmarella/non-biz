@@ -67,3 +67,4 @@ npx oxlint       # lint
 The end-to-end test never touches a real forge-api-gateway — it's fully
 self-contained against the mock, so `npm test` has no side effects outside
 this repo.
+

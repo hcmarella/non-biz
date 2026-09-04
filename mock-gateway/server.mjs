@@ -57,17 +57,17 @@ const server = createServer(async (req, res) => {
     return send(res, 204, {});
   }
 
-  if (req.method === "POST" && url.pathname === "/ai/chat") {
+  if (req.method === "POST" && (url.pathname === "/ai/chat" || url.pathname === "/ai/chat/stream")) {
     const { question, conversation_id } = await readJson(req);
     const query = String(question ?? "").toLowerCase();
     const hit = knowledgeBase.find((entry) =>
       query.includes(entry.topic.toLowerCase()),
     );
-
+    const route = hit ? "skill_match" : "draft_skill";
     const response = hit
       ? {
           answer: hit.content,
-          route: "skill_match",
+          route,
           sources: [{ source_type: "skill", source_ref: hit.review_id }],
           gate_passed: true,
           score: 0.9,
@@ -77,7 +77,7 @@ const server = createServer(async (req, res) => {
       : {
           answer:
             "I don't have a confident answer or an existing skill for that yet.",
-          route: "draft_skill",
+          route,
           sources: [],
           gate_passed: false,
           score: 0.0,
@@ -85,7 +85,24 @@ const server = createServer(async (req, res) => {
           message_id: randomUUID(),
         };
 
-    return send(res, 200, response);
+    if (url.pathname === "/ai/chat") {
+      return send(res, 200, response);
+    }
+
+    // /ai/chat/stream: same shape as the real gateway's SSE endpoint —
+    // a few progress events, then one `stage: "complete"` event.
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Access-Control-Allow-Origin": "*",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+    });
+    const sse = (payload) => res.write(`data: ${JSON.stringify(payload)}\n\n`);
+    sse({ stage: "triage", label: "Understanding your question..." });
+    sse({ stage: route, label: hit ? "Checking for a matching skill..." : "No confident match — logging the gap..." });
+    sse({ stage: "gates", label: "Checking sources..." });
+    sse({ stage: "complete", result: response });
+    return res.end();
   }
 
   if (req.method === "GET" && url.pathname === "/admin/review-queue") {
