@@ -1,0 +1,273 @@
+# FORGE — FINAL ARCHITECTURE &amp; GO-LIVE IMPLEMENTATION GUIDE
+
+> This is the definitive, complete reference. Supersedes every prior document in this build. Two repos: `forge-api-gateway` (backend, all logic) and `ForgeUI` (frontend + BFF, no logic). Follow in order — each stage has an explicit exit condition before the next begins.
+
+---
+
+## PART A — Architecture, final state
+
+```
+┌────────────────────────────────────────────────────────┐
+│  ForgeUI (React) — Business Portal + Manager Portal      │
+│  Single app, AD-group → persona resolved, conditionally    │
+│  rendered (Manager admin panel code-split via React.lazy)    │
+└───────────────────────┬────────────────────────────────┘
+                          │ HTTPS
+                          ▼
+┌────────────────────────────────────────────────────────┐
+│  BFF (in ForgeUI repo)                                     │
+│  - Attaches Okta session to every gateway call                │
+│  - Shapes gateway responses per-screen                          │
+│  - ZERO business logic, ZERO database, ZERO routing decisions     │
+└───────────────────────┬────────────────────────────────┘
+                          │ HTTPS, Okta bearer token
+                          ▼
+┌────────────────────────────────────────────────────────┐
+│  forge-api-gateway (FastAPI + LangGraph)                    │
+│  ┌──────────────────────────────────────────────────┐    │
+│  │ Auth: validate token → resolve role + team_id        │    │
+│  │ Intent Router (Haiku): command? skill? RAG? live? report?│    │
+│  │ LangGraph orchestration — see graph below                │    │
+│  │ 6 Gates: Permission, Evidence, Freshness, Quality,          │    │
+│  │          Action (human approval), Memory (staged review)      │    │
+│  │ Eval/Confidence scoring                                          │    │
+│  │ Response Formatter — frozen AIResponse contract                    │    │
+│  └──────────────────────────────────────────────────┘    │
+└──┬──────────┬──────────┬──────────┬──────────┬──────────┘
+   ▼          ▼          ▼          ▼          ▼
+Skills/    pgvector   Live MCP   Report    Draft-Skill
+Personas   (RAG)      Connectors Service   Governance
+(local     team_id-   Jira/Conf/ (Splunk,  (gap→draft→
+ .md,      scoped     ServiceNow/PowerBI)  weekly PR
+ never                SharePoint                        review)
+ embedded)            (M365=delegated
+                       per-user OAuth,
+                       never shared)
+   │          │
+   └────┬─────┘
+        ▼
+┌────────────────────────────────────────────────────────┐
+│  PostgreSQL + pgvector (RDS)                                │
+│  teams · users · conversations/messages · knowledge_chunks    │
+│  persona_index · audit_log · content_review_queue                │
+│  skill_gap_log · eval_case_log · sync_runs                         │
+└────────────────────────────────────────────────────────┘
+
+┌────────────────────────┐   ┌──────────────────────────┐
+│ Redis — session hot-tier  │   │ Neo4j — TEST LANE ONLY       │
+│ (8h TTL)                    │   │ host team_id, multi-hop RAG     │
+└────────────────────────┘   │ comparison, never in main compose │
+                                └──────────────────────────┘
+
+┌────────────────────────┐
+│ Amazon Bedrock              │
+│ Claude Haiku 4.5 (triage)      │
+│ Claude Sonnet 5 (synthesis)       │
+│ Titan Embeddings V2 (768/1536dim)   │
+│ Interim: direct Anthropic API key      │
+└────────────────────────┘
+```
+
+### LangGraph — the node graph, final
+
+```
+triage(state) → intent
+  ├─ "command"  → skill_match(persona_access filter) → execute → format
+  ├─ "skill"    → skill_match → execute → format
+  ├─ "rag"      → rag_node(pgvector default | graphdb if team=host)
+  │                → agentic_retry(if score<0.6, reformulate, retry once)
+  │                → synthesize(Claude, cached prompt) → gates → eval_score → format
+  ├─ "live"     → live_data_node(MCP connector) → format (NO LLM)
+  ├─ "report"   → report_node(Report Service, validated data) → synthesize(narrate only) → format
+  └─ "no_match" → draft_skill_node(log gap, draft, stage) → graceful fallback → format
+```
+
+---
+
+## PART B — Step-by-step implementation, in dependency order
+
+### STAGE 1 — Local foundation (`forge-api-gateway`)
+
+```bash
+git clone <forge-api-gateway-url> && cd forge-api-gateway
+
+# .env (local only, never committed)
+cat > .env <<EOF
+DATABASE_URL=postgresql://forge:forge@postgres:5432/forge
+REDIS_URL=redis://redis:6379
+ANTHROPIC_API_KEY=<your interim key>
+EMBED_MODEL=BAAI/bge-base-en-v1.5
+JIRA_API_TOKEN=<token>
+JIRA_BASE_URL=<url>
+CONFLUENCE_API_TOKEN=<token>
+GITHUB_PAT=<contents:read only>
+OKTA_ISSUER=<url>
+OKTA_CLIENT_ID=<id>
+EOF
+
+docker-compose up -d
+curl http://localhost:8000/health   # must be 200
+```
+
+**Exit condition**: clean `docker-compose down -v && docker-compose up -d` twice in a row, both times healthy.
+
+### STAGE 2 — Embeddings + schema
+
+```bash
+pip install sentence-transformers --break-system-packages
+```
+```python
+# app/rag/embed.py
+from sentence_transformers import SentenceTransformer
+_model = SentenceTransformer("BAAI/bge-base-en-v1.5")
+def embed(text: str) -> list[float]:
+    return _model.encode(text).tolist()
+```
+```sql
+-- db/schema.sql — run via Flyway
+CREATE EXTENSION IF NOT EXISTS vector;
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+-- [full schema — teams, users, conversations, messages, message_sources,
+--  documents, access_control, knowledge_chunks VECTOR(768), persona_index,
+--  audit_log, content_review_queue, sync_runs, skill_gap_log, eval_case_log]
+```
+**Exit condition**: `SELECT vector_dims(embedding) FROM knowledge_chunks LIMIT 1;` = 768, confirmed after one real insert.
+
+### STAGE 3 — Ingestion (10-20 real files first)
+
+```bash
+python app/ingestion/local_md_ingest.py --team-id=test --path=./knowledge/sample
+```
+**Exit condition**: rows inserted, zero duplicate `chunk_id`s, cosine sanity check passes (paraphrase pairs >0.85, unrelated <0.4).
+
+### STAGE 4 — LangGraph skeleton
+
+Build `app/agents/graph.py` per the node diagram in Part A. Mock `synthesize` initially if the Anthropic key isn't wired yet.
+
+**Exit condition**: 5 test questions (one per branch) each print a different, correct route at the triage step.
+
+### STAGE 5 — Skills, persona_access, draft-skill governance
+
+```
+knowledge/skills/business/*.md   (persona_access: [business, manager])
+knowledge/skills/developer/*.md  (persona_access: [developer])
+```
+Build `skill_match.py` (filters by `persona_access`), `draft_skill_node.py` (per Part A), `app/admin/review_queue.py` (approve/reject endpoints).
+
+**Exit condition**: business-role user matches only business skills; an unmatched question produces a `skill_gap_log` row + a pending `content_review_queue` item + a graceful fallback answer, with nothing auto-written to `knowledge/skills/`.
+
+### STAGE 6 — Real model wiring (you have this now — do it today)
+
+```python
+import anthropic
+client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+def call_model(prompt: str) -> str:
+    r = client.messages.create(model="claude-sonnet-4-6", max_tokens=1024,
+        messages=[{"role": "user", "content": prompt}])
+    return r.content[0].text
+```
+Add prompt caching (static system prompt + persona instructions first, dynamic content last, per the caching design).
+
+**Exit condition**: real, cited answers on all 5 test questions.
+
+### STAGE 7 — Gates + evals
+
+Wrap router output in one `run_gates()` function (Permission, Evidence, Freshness, Quality, Action, Memory). Build `app/evals/golden_questions.py` (15-20 real questions) + `eval_runner.py`.
+
+**Exit condition**: eval suite runs, logs to `eval_case_log`, confidence scores vary meaningfully (not always 0 or 1).
+
+### STAGE 8 — RBAC/leakage test suite (highest priority open item)
+
+```python
+# tests/test_data_leakage.py — implement TC-1.1 through TC-1.5
+```
+**Exit condition**: adversarial cross-team query (TC-1.2) correctly denied and logged.
+
+### STAGE 9 — Connectors, one at a time
+
+Jira → Confluence (embed path) → SharePoint (delegated OAuth, live, never embedded) → ServiceNow → Splunk. Each verified in isolation via curl before the next.
+
+**Exit condition**: each connector's dedicated test passes before starting the next.
+
+### STAGE 10 — Frontend + BFF (`ForgeUI`)
+
+```bash
+git clone <ForgeUI-url> && cd ForgeUI
+# .env
+echo "VITE_API_BASE_URL=http://localhost:8000" > .env
+npm install && npm run dev
+```
+Build: `SourcesPanel.tsx`, `ActionsRow.tsx`, `TransparencyLine.tsx`, BFF layer (`bff/` — session attach + response shaping only), Admin review-queue screen.
+
+**Exit condition**: full browser click-through — real question, real sources/confidence rendered, admin can approve a draft skill and see it work on re-ask.
+
+### STAGE 11 — CI/CD
+
+```yaml
+# .github/workflows/deploy.yml — both repos
+test → security-scan → build-push (ECR) → deploy-dev → smoke-test → [manual approval] → stg → [manual approval] → prod
+```
+Weekly skill-review Action per the earlier design.
+
+**Exit condition**: pipeline green end-to-end against a test push.
+
+### STAGE 12 — Infra request (Terraform + Helm, already built)
+
+Submit PR: namespace (`forge-dev`) + NetworkPolicy, IRSA (2 roles, scoped exactly), RDS+pgvector (not in-cluster), DNS (`forge-gateway-dev.k8s.internal.capitalgroup.com`, `forge-ui-dev...`), egress confirmation (github.com, graph.microsoft.com, Atlassian, bedrock endpoint), CI/CD OIDC access.
+
+**Exit condition**: `terraform plan` reviewed and approved.
+
+### STAGE 13 — Deploy DEV
+
+```bash
+flyway -url=jdbc:postgresql://<rds-endpoint>/forge migrate
+helm upgrade --install forge-api-gateway ./infra/helm -f values-dev.yaml --set image.tag=$SHA -n forge-dev
+curl https://forge-gateway-dev.k8s.internal.capitalgroup.com/health
+# gateway alone, verified, THEN:
+helm upgrade --install forge-ui ./infra/helm -f values-dev.yaml --set image.tag=$SHA -n forge-dev
+```
+**Exit condition**: full test suite green against the DEV URL, not just local.
+
+### STAGE 14 — STG, then PROD
+
+Second `team_id` onboarded in STG to prove multi-tenant isolation under real conditions. RDS Proxy, HPA, Karpenter, CloudFront, Redis cluster-mode added per the production-scale design. Bedrock quota increase requested once real STG traffic data exists.
+
+**Exit condition**: RBAC/leakage + eval suites green in CI on every PR; Doug/stakeholder demo approved; PROD deploy with Multi-AZ, real secrets, full observability.
+
+---
+
+## PART C — Connection strings &amp; config reference
+
+```bash
+# Local
+DATABASE_URL=postgresql://forge:forge@postgres:5432/forge
+REDIS_URL=redis://redis:6379
+
+# DEV
+DATABASE_URL=postgresql://forge:<secret>@<rds-dev-endpoint>:5432/forge
+REDIS_URL=redis://<elasticache-dev-endpoint>:6379
+
+# Model
+ANTHROPIC_API_KEY=<interim, direct API>
+# → swap to Bedrock once approved:
+AWS_REGION=<region>
+BEDROCK_MODEL_ID=anthropic.claude-sonnet-5
+
+# Gateway URL, per environment (ForgeUI's VITE_API_BASE_URL — baked at BUILD time)
+dev:  https://forge-gateway-dev.k8s.internal.capitalgroup.com
+stg:  https://forge-gateway-stg.k8s.internal.capitalgroup.com
+prod: https://forge-gateway.k8s.internal.capitalgroup.com
+```
+
+---
+
+## PART D — Go-live priority order (fastest safe path)
+
+1. **Today**: Stage 6 (real Anthropic model, unblocked now) + Stage 8 (RBAC/leakage — highest priority)
+2. **This week**: Stages 1-7, 9 completed and verified locally
+3. **Next**: Stage 10 (frontend/BFF), Stage 11 (CI/CD)
+4. **In parallel with the above**: Stage 12 (Terraform PR submission — doesn't block local work)
+5. **Once infra lands**: Stage 13 (DEV deploy)
+6. **After DEV is stable + Doug demo done**: Stage 14 (STG → PROD)
+
+**The one rule that keeps this fast without becoming reckless**: never start a stage before the previous one's exit condition is met. Every debugging session in this entire build happened because a later layer was built on an unverified earlier one — skipping verification to "go faster" has already cost more time than it saved, every time it happened.
