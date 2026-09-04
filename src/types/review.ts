@@ -10,4 +10,5 @@ export interface ReviewItem {
   target: string;
   proposed_content: string;
   status: ReviewStatus;
+  submitted_by: string;
 }

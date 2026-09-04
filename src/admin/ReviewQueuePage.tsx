@@ -57,7 +57,7 @@ export function ReviewQueuePage({ teamId, reviewer, role }: ReviewQueuePageProps
       {items.map((item) => (
         <div key={item.review_id} className="review-queue__item">
           <p className="review-queue__meta">
-            {item.target} · team {item.team_id}
+            {item.target} · team {item.team_id} · submitted by {item.submitted_by}
           </p>
           <textarea
             aria-label="Draft content"

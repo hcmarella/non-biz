@@ -6,7 +6,7 @@
 // - POST /ai/chat takes {question, team_id, persona, user_email, conversation_id}
 //   and returns {answer, route, sources, gate_passed, score, conversation_id, message_id}
 // - GET /admin/review-queue?team_id=... lists {review_id, team_id, target,
-//   proposed_content, status}
+//   proposed_content, status, submitted_by}
 // - POST /admin/review-queue/:id/approve-skill and .../reject, both requiring
 //   a `role` in ADMIN_ROLES (client-supplied, not verified — a stopgap, same
 //   trust model as team_id/persona/user_email elsewhere in that repo)
@@ -27,6 +27,7 @@ let reviewQueue = [
     proposed_content:
       "The staging environment is refreshed nightly at 02:00 UTC from a prod snapshot.",
     status: "pending",
+    submitted_by: "system:draft_skill_node",
     topic: "staging refresh",
   },
 ];
